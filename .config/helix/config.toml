@@ -1,0 +1,31 @@
+theme = "catppuccin_mocha"
+
+[editor.auto-save.after-delay]
+enable = true
+timeout = 3000   
+
+[editor]
+gutters = ["line-numbers", "diff", "spacer"]
+line-number = "relative"
+
+[keys.normal]
+C-h = "jump_view_left"
+C-j = "jump_view_down"
+C-k = "jump_view_up"
+C-l = "jump_view_right"
+C-y = [
+  ':sh rm -f /tmp/unique-file',
+  ':insert-output yazi "%{buffer_name}" --chooser-file=/tmp/unique-file',
+  ':sh printf "\x1b[?1049h\x1b[?2004h" > /dev/tty',
+  ':open %sh{cat /tmp/unique-file}',
+  ':redraw',
+]
+
+[keys.insert]
+C-h = ["normal_mode", "jump_view_left"]
+C-j = ["normal_mode", "jump_view_down"]
+C-k = ["normal_mode", "jump_view_up"]
+C-l = ["normal_mode", "jump_view_right"]
+
+[keys.normal.space]
+t = ":sh ~/.local/bin/hx-run-rails-test"

@@ -1,0 +1,23 @@
+lastupdatecheck: 0
+recentrepos:
+    - /Users/neoweo/neetozone/neeto-planner-web
+    - /Users/neoweo/neetozone/neeto-planner-cli
+    - /Users/neoweo/neetozone/neeto-crm-web
+    - /Users/neoweo/PixelCompute/Projects/rubyonrails/granite
+    - /Users/neoweo/PixelCompute/Projects/rubyonrails/blog-it
+    - /Users/neoweo/PixelCompute/Projects/REACT/cinesearcher-by-rakib-mondal
+startuppopupversion: 5
+didshowhunkstaginghint: true
+lastversion: 0.61.1
+customcommandshistory:
+    - q
+    - :q
+hidecommandlog: true
+githubPullRequests:
+    /Users/neoweo/neetozone/neeto-planner-web:
+        - headRefName: main
+          number: 8816
+          title: Making production uptodate with main
+          state: MERGED
+          url: https://github.com/neetozone/neeto-planner-web/pull/8816
+          headRepositoryOwner: neetozone

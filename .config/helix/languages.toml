@@ -1,0 +1,87 @@
+[[language]]
+name = "erb"
+language-servers = [
+  { name = "ruby-lsp", only-features = ["format", "diagnostics", "hover", "goto-definition"] },
+  "tailwindcss-ls",
+  "emmet-ls",
+]
+file-types = ["erb"]
+formatter = { command = "prettier", args = ["--parser", "erb-template"] }
+auto-format = true
+[language.auto-pairs]
+'<' = '>'
+'%' = '%'
+"'" = "'"
+'"' = '"'
+
+[[language]]
+name = "html"
+language-servers = ["tailwindcss-ls", "emmet-ls"]
+file-types = ["html"]
+formatter = { command = "prettier", args = ["--parser", "html"] }
+auto-format = true
+
+[[language]]
+name = "ruby"
+language-servers = ["ruby-lsp"]
+auto-format = true
+formatter = { command = "rubocop", args = ["--stdin", "%{buffer_name}", "--auto-correct", "--stderr", "-f", "quiet"] }
+
+[[language]]
+name = "javascript"
+language-servers = ["typescript-language-server", "eslint"]
+auto-format = true
+formatter = { command = "prettier", args = ["--parser", "babel"] }
+
+[[language]]
+name = "jsx"
+language-servers = ["typescript-language-server", "eslint", "tailwindcss-ls"]
+auto-format = true
+formatter = { command = "prettier", args = ["--parser", "babel"] }
+file-types = ["jsx"]
+
+[[language]]
+name = "typescript"
+language-servers = ["typescript-language-server", "eslint"]
+auto-format = true
+formatter = { command = "prettier", args = ["--parser", "typescript"] }
+
+[[language]]
+name = "tsx"
+language-servers = ["typescript-language-server", "eslint", "tailwindcss-ls"]
+auto-format = true
+formatter = { command = "prettier", args = ["--parser", "typescript"] }
+file-types = ["tsx"]
+
+[[language]]
+name = "go"
+language-servers = ["gopls", "golangci-lint-lsp"]
+auto-format = true
+formatter = { command = "goimports" }
+
+[language-server.ruby-lsp]
+command = "ruby-lsp"
+config = { diagnostics = true, formatting = true }
+
+[language-server.eslint]
+command = "vscode-eslint-language-server"
+args = ["--stdio"]
+[language-server.eslint.config]
+codeActionsOnSave = { mode = "all" }
+format = false
+
+[language-server.typescript-language-server]
+command = "typescript-language-server"
+args = ["--stdio"]
+
+[language-server.tailwindcss-ls]
+command = "tailwindcss-language-server"
+args = ["--stdio"]
+
+[language-server.gopls]
+command = "gopls"
+
+[language-server.golangci-lint-lsp]
+command = "golangci-lint-langserver"
+[language-server.golangci-lint-lsp.config]
+command = ["golangci-lint", "run", "--output.json.path=stdout", "--show-stats=false", "--issues-exit-code=1"]

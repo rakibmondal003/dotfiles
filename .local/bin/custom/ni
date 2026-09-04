@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+#
+# issue-work.sh — go from a GitHub issue link to a ready-to-work tmux session.
+#
+# Usage:
+#   issue-work.sh [-b|--base <branch>] [-n|--name <custom-name>] <github-issue-url>
+#
+# Examples:
+#   issue-work.sh https://github.com/neetoZone/neeto-planner-web/issues/12918
+#   issue-work.sh -n "custom branch title" https://github.com/neetoZone/neeto-planner-web/issues/12918
+#   issue-work.sh --base feature/billing-v2 https://github.com/neetoZone/neeto-planner-web/issues/12918
+#
+# What it does:
+#   1. Parses org/repo/issue-number out of the URL.
+#   2. Checks if a local branch starting with <issue-number>- already exists.
+#   3. If not, fetches issue title via `gh` (or uses -n/--name if provided) and slugifies it.
+#   4. Creates (or reuses) a branch named <issue-number>-<slugified-name>
+#      off the base branch (default: main, override with -b/--base or MAIN_BRANCH=...)
+#   5. Checks out the branch. If the branch is newly created, runs bin/setup
+#      (if present), which is assumed to also run migrations. If the branch
+#      already existed, skips bin/setup and just runs migrations instead.
+#   6. Creates (or attaches to) a tmux session named <repo-name>-<issue-number>
+#      with four windows:
+#        1) editor  - opens `hx` on the repo
+#        2) term    - a fresh shell
+#        3) console - runs `rails c`
+#        4) server  - runs `bin/launch`
+#
+# Requirements: gh (authenticated), tmux, hx (helix), git
+# Assumes repos live at: $HOME/neetozone/<repo-name>
+# Base branch defaults to 'main'; override with -b/--base <branch> or
+# MAIN_BRANCH=<branch> as an env var. The flag takes precedence.
+
+set -euo pipefail
+
+# ---------- helpers ----------
+
+err() { echo "Error: $*" >&2; exit 1; }
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || err "'$1' is required but not installed/on PATH."
+}
+
+slugify() {
+  # lowercase, non-alnum runs -> single hyphen, trim leading/trailing hyphens
+  echo "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+}
+
+# ---------- validate args & tools ----------
+
+BASE_BRANCH_OPT=""
+CUSTOM_NAME_OPT=""
+ISSUE_URL=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -b|--base)
+      [ $# -ge 2 ] || err "-b/--base requires a branch name argument"
+      BASE_BRANCH_OPT="$2"
+      shift 2
+      ;;
+    -n|--name)
+      [ $# -ge 2 ] || err "-n/--name requires a custom branch name argument"
+      CUSTOM_NAME_OPT="$2"
+      shift 2
+      ;;
+    -h|--help)
+      sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    -*)
+      err "unknown option: $1"
+      ;;
+    *)
+      if [ -n "$ISSUE_URL" ]; then
+        err "unexpected extra argument: $1"
+      fi
+      ISSUE_URL="$1"
+      shift
+      ;;
+  esac
+done
+
+[ -n "$ISSUE_URL" ] || err "usage: $(basename "$0") [-b|--base <branch>] [-n|--name <custom-name>] <github-issue-url>"
+
+need_cmd gh
+need_cmd tmux
+need_cmd hx
+need_cmd git
+need_cmd mise
+
+# ---------- parse the issue URL ----------
+# Expected: https://github.com/<org>/<repo>/issues/<number>
+
+if [[ "$ISSUE_URL" =~ github\.com/([^/]+)/([^/]+)/issues/([0-9]+) ]]; then
+  ORG="${BASH_REMATCH[1]}"
+  REPO_NAME="${BASH_REMATCH[2]}"
+  ISSUE_NUMBER="${BASH_REMATCH[3]}"
+else
+  err "could not parse org/repo/issue number from: $ISSUE_URL
+Expected something like: https://github.com/org/repo/issues/1234"
+fi
+
+REPO_PATH="$HOME/neetozone/$REPO_NAME"
+
+[ -d "$REPO_PATH" ] || err "repo folder not found at $REPO_PATH"
+[ -d "$REPO_PATH/.git" ] || err "$REPO_PATH does not look like a git repo"
+
+# ---------- determine branch name ----------
+
+cd "$REPO_PATH"
+
+# Check if any local branch already starts with <issue-number>-
+EXISTING_BRANCH="$(git for-each-ref --format='%(refname:short)' "refs/heads/${ISSUE_NUMBER}-*" | head -n 1)"
+
+if [ -n "$EXISTING_BRANCH" ]; then
+  BRANCH_NAME="$EXISTING_BRANCH"
+  echo "Found existing branch matching issue #${ISSUE_NUMBER}: $BRANCH_NAME"
+else
+  if [ -n "$CUSTOM_NAME_OPT" ]; then
+    ISSUE_SLUG="$(slugify "$CUSTOM_NAME_OPT")"
+  else
+    echo "Fetching issue #$ISSUE_NUMBER from $ORG/$REPO_NAME..."
+    ISSUE_TITLE="$(gh issue view "$ISSUE_NUMBER" --repo "$ORG/$REPO_NAME" --json title --jq '.title' 2>/dev/null || true)"
+
+    if [ -z "$ISSUE_TITLE" ]; then
+      err "could not fetch issue title via 'gh issue view'. Is 'gh auth login' set up and does the issue exist?"
+    fi
+    ISSUE_SLUG="$(slugify "$ISSUE_TITLE")"
+  fi
+  BRANCH_NAME="${ISSUE_NUMBER}-${ISSUE_SLUG}"
+fi
+
+SESSION_NAME="${REPO_NAME}-${ISSUE_NUMBER}"
+
+echo "Branch      : $BRANCH_NAME"
+echo "Session     : $SESSION_NAME"
+echo "Repo path   : $REPO_PATH"
+
+# ---------- create/checkout branch ----------
+
+MAIN_BRANCH="${BASE_BRANCH_OPT:-${MAIN_BRANCH:-main}}"
+
+# Tracks whether we created BRANCH_NAME in this run (vs it already existing),
+# so we know whether to run full bin/setup or just migrations below.
+BRANCH_IS_NEW=false
+
+if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
+  echo "Branch '$BRANCH_NAME' exists locally, checking it out..."
+  git checkout "$BRANCH_NAME"
+else
+  BRANCH_IS_NEW=true
+
+  # Resolve the base branch: prefer an existing local branch, fall back to
+  # fetching it from origin if it only exists remotely.
+  if git show-ref --verify --quiet "refs/heads/$MAIN_BRANCH"; then
+    : # local branch exists, nothing to do
+  elif git ls-remote --exit-code --heads origin "$MAIN_BRANCH" >/dev/null 2>&1; then
+    echo "Base branch '$MAIN_BRANCH' not found locally, fetching from origin..."
+    git fetch origin "$MAIN_BRANCH:$MAIN_BRANCH"
+  else
+    err "base branch '$MAIN_BRANCH' not found locally or on origin."
+  fi
+
+  echo "Creating branch '$BRANCH_NAME' off '$MAIN_BRANCH'..."
+  git checkout "$MAIN_BRANCH"
+  git branch "$BRANCH_NAME" "$MAIN_BRANCH"
+
+  echo "Pulling latest '$MAIN_BRANCH'..."
+  git pull origin "$MAIN_BRANCH" --ff-only || err "pull of '$MAIN_BRANCH' failed. Resolve manually (e.g. local changes/diverged history) and re-run."
+
+  echo "Checking out '$BRANCH_NAME'..."
+  git checkout "$BRANCH_NAME"
+fi
+
+if [ "$BRANCH_IS_NEW" = true ]; then
+  if [ -x "$REPO_PATH/bin/setup" ]; then
+    echo "New branch — running bin/setup (includes migrations)..."
+    (cd "$REPO_PATH" && mise exec -- "$REPO_PATH/bin/setup") || err "bin/setup failed. Resolve and re-run."
+  else
+    echo "No executable bin/setup found, skipping."
+  fi
+else
+  echo "Existing branch — skipping bin/setup, running migrations only..."
+  if [ -x "$REPO_PATH/bin/rails" ]; then
+    (cd "$REPO_PATH" && mise exec -- "$REPO_PATH/bin/rails" db:migrate) || err "db:migrate failed. Resolve and re-run."
+  else
+    (cd "$REPO_PATH" && mise exec -- bundle exec rails db:migrate) || err "db:migrate failed. Resolve and re-run."
+  fi
+fi
+
+# ---------- tmux session ----------
+
+if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+  echo "tmux session '$SESSION_NAME' already exists, attaching..."
+  if [ -n "${TMUX:-}" ]; then
+    tmux switch-client -t "$SESSION_NAME"
+  else
+    tmux attach-session -t "$SESSION_NAME"
+  fi
+  exit 0
+fi
+
+echo "Creating tmux session '$SESSION_NAME'..."
+
+# Window 1: editor (hx)
+tmux new-session -d -s "$SESSION_NAME" -n editor -c "$REPO_PATH"
+tmux send-keys -t "${SESSION_NAME}:editor" "hx ." C-m
+
+# Window 2: fresh terminal
+tmux new-window -t "$SESSION_NAME" -n term -c "$REPO_PATH"
+
+# Window 3: rails console
+tmux new-window -t "$SESSION_NAME" -n console -c "$REPO_PATH"
+tmux send-keys -t "${SESSION_NAME}:console" "rails c" C-m
+
+# Window 4: bin/launch
+tmux new-window -t "$SESSION_NAME" -n server -c "$REPO_PATH"
+tmux send-keys -t "${SESSION_NAME}:server" "bin/launch" C-m
+
+# Land back on the editor window
+tmux select-window -t "${SESSION_NAME}:editor"
+
+if [ -n "${TMUX:-}" ]; then
+  tmux switch-client -t "$SESSION_NAME"
+else
+  tmux attach-session -t "$SESSION_NAME"
+fi

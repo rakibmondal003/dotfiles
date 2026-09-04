@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# ~/.local/bin/hx-run-rails-test
+if [ -z "$HX_RAILS_POPUP" ]; then
+  SRC_PANE=$(tmux display-message -p "#{pane_id}")
+  exec tmux display-popup -w 80% -h 60% -T " Rails Test " \
+    env HX_RAILS_POPUP=1 ~/.local/bin/hx-run-rails-test "$SRC_PANE"
+fi
+SRC_PANE="$1"
+if [ -z "$SRC_PANE" ]; then
+  echo "No source pane passed."
+  sleep 2
+  exit 1
+fi
+PANE_TEXT=$(tmux capture-pane -t "$SRC_PANE" -p)
+FILE=$(echo "$PANE_TEXT" | grep -oE '[A-Za-z0-9_./-]+\.rb' | tail -n 1)
+LINE=$(echo "$PANE_TEXT" | grep -oE '[0-9]+:[0-9]+' | tail -n 1 | cut -d':' -f1)
+if [ -z "$FILE" ]; then
+  echo "Could not detect active test file in Helix statusline."
+  sleep 2
+  exit 1
+fi
+if [ -n "$LINE" ] && [ "$LINE" != "1" ]; then
+  TARGET="${FILE}:${LINE}"
+else
+  TARGET="$FILE"
+fi
+# cd into the project root so mise picks up the right .mise.toml / .ruby-version
+cd "$(dirname "$FILE")" 2>/dev/null || true
+PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+cd "$PROJECT_ROOT" || exit 1
+echo "Running: bin/rails test $TARGET"
+echo "----------------------------------------"
+mise exec -- bundle exec rails test "$TARGET"

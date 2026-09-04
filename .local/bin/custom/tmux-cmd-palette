@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+# Prompt for command
+read -r -p "> " CMD
+[ -z "$CMD" ] && exit 0
+
+echo -e "\n--- Output ---"
+OUTPUT=$(eval "$CMD" 2>&1)
+echo "$OUTPUT"
+echo -e "--------------\n"
+
+# Prompt to copy
+read -r -n 1 -p "Copy output to clipboard? [y/N]: " CHOICE
+echo ""
+
+if [[ "$CHOICE" =~ ^[Yy]$ ]]; then
+  if command -v pbcopy &>/dev/null; then
+    echo -n "$OUTPUT" | pbcopy
+  elif command -v wl-copy &>/dev/null; then
+    echo -n "$OUTPUT" | wl-copy
+  elif command -v xclip &>/dev/null; then
+    echo -n "$OUTPUT" | xclip -selection clipboard
+  else
+    echo -n "$OUTPUT" | tmux load-buffer -
+  fi
+  echo "Copied to clipboard!"
+  sleep 1
+fi

@@ -1,0 +1,4 @@
+os:
+  edit: "hx {{filename}}"
+  editAtLine: "hx {{filename}} --config-args '+{{line}}'"  
+  editAtLineAndWait: "hx {{filename}} --config-args '+{{line}}' | true" 
